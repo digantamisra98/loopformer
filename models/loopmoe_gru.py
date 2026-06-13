@@ -70,7 +70,9 @@ class MoEMLP(nn.Module):
         else:
             logits = self.router_lin(xf)                        # [BT, N], stateless
         topv, topi = logits.topk(self.top_k, dim=-1)            # [BT, k]
-        gate_full = torch.zeros_like(logits).scatter_(1, topi, torch.softmax(topv, dim=-1))  # [BT, N]
+        # softmax upcasts to fp32 under autocast; cast back so scatter dtype matches logits
+        gate_full = torch.zeros_like(logits).scatter_(
+            1, topi, torch.softmax(topv, dim=-1).to(logits.dtype))  # [BT, N]
         out = torch.zeros_like(xf)
         for j, expert in enumerate(self.experts):               # dense-compute prototype
             out = out + gate_full[:, j:j + 1] * expert(xf)
