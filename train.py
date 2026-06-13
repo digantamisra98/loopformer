@@ -88,6 +88,8 @@ if model_type == "loopformer":
     from models.loopformer import GPTConfig, GPT
 elif "tmlt" in model_type:
     from models.tmlt import GPTConfig, GPT
+elif "backrouter" in model_type:
+    from models.backrouter_loop import GPTConfig, GPT
 elif "base_loop" in model_type:
     from models.base_loop import GPTConfig, GPT
 elif model_type == "base":
