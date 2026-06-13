@@ -158,8 +158,8 @@ train_loader = build_loader(
     mode='permuted',  # or 'permuted' for random
     stride=block_size,  # or a different stride for overlapping
     seed=TRAIN_SEED,
-    num_workers=4,
-    persistent_workers=True,
+    num_workers=0,
+    persistent_workers=False,
     drop_last=True
 )
 val_loader = build_loader(
@@ -170,8 +170,8 @@ val_loader = build_loader(
     mode='permuted',
     stride=block_size,
     seed=VAL_SEED,
-    num_workers=4,
-    persistent_workers=True,
+    num_workers=0,
+    persistent_workers=False,
     drop_last=True
 )
 def _cycle(loader):
