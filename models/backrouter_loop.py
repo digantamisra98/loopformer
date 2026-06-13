@@ -101,6 +101,9 @@ class GPTConfig:
     halt_coeff: float = 0.1      # weight of the halting BCE (the backward router)
     halt_tau: float = 0.0        # marginal-value threshold: step worth it iff delta_d > tau
     deep_supervision: bool = True  # supervise every depth (anytime-usable block)
+    halt_ponder_coeff: float = 0.0  # ponder cost: penalize expected continue-mass (compute)
+    halt_head_type: str = 'linear'  # 'linear' (feedforward) or 'gru' (state-tracking over depth)
+    halt_gru_dim: int = 256      # hidden size of the GRU halting head (if 'gru')
 
 
 class GPT(nn.Module):
@@ -118,7 +121,12 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Halting head (the forward depth policy): from the state BEFORE a step, predict whether
         # that step is worth running. Supervised by the backward-computed marginal value.
-        self.halt_head = nn.Linear(config.n_embd, 1, bias=True)
+        # 'gru' tracks the value/state trajectory across recurrences (recurrent backward router).
+        if config.halt_head_type == 'gru':
+            self.halt_gru = nn.GRUCell(config.n_embd, config.halt_gru_dim)
+            self.halt_proj = nn.Linear(config.halt_gru_dim, 1, bias=True)
+        else:
+            self.halt_head = nn.Linear(config.n_embd, 1, bias=True)
         self.transformer.wte.weight = self.lm_head.weight  # weight tying
 
         self.apply(self._init_weights)
@@ -163,24 +171,33 @@ class GPT(nn.Module):
             return logits, None, x
 
         # --- training: per-depth early-exit loss + backward-router halting supervision ---
+        use_gru = self.config.halt_head_type == 'gru'
+        gru_state = None
         loss_prev, _ = self._readout_loss(x, targets)               # depth-0 readout [B,T]
         lm_terms = [loss_prev.mean()] if self.config.deep_supervision else []
-        halt_terms = []
+        halt_terms, ponder_terms = [], []
         logits = None
         for _d in range(1, K + 1):
-            halt_logit = self.halt_head(x).squeeze(-1)              # [B,T] predict: is step _d worth it?
+            if use_gru:  # recurrent backward router: track the value/state trajectory over depth
+                gru_state = self.halt_gru(x.reshape(b * t, -1), gru_state)
+                halt_logit = self.halt_proj(gru_state).view(b, t)   # [B,T] is step _d worth it?
+            else:
+                halt_logit = self.halt_head(x).squeeze(-1)          # [B,T]
             x = self.transformer.h(x)                               # apply the shared (recurrent) block
             loss_d, logits = self._readout_loss(x, targets)         # [B,T], [B,T,V]
             # Backward router: marginal value of this step (target-aware), supervises halting.
             delta = (loss_prev - loss_d).detach()                  # >0 => step helped
             halt_target = (delta > self.config.halt_tau).float()
             halt_terms.append(F.binary_cross_entropy_with_logits(halt_logit, halt_target))
+            ponder_terms.append(torch.sigmoid(halt_logit).mean())  # expected continue-mass (compute)
             lm_terms.append(loss_d.mean())
             loss_prev = loss_d
 
         lm_loss = torch.stack(lm_terms).mean() if self.config.deep_supervision else lm_terms[-1]
         halt_loss = torch.stack(halt_terms).mean()
-        loss = lm_loss + self.config.halt_coeff * halt_loss
+        ponder_loss = torch.stack(ponder_terms).mean()
+        loss = (lm_loss + self.config.halt_coeff * halt_loss
+                + self.config.halt_ponder_coeff * ponder_loss)
         return logits, loss, x
 
     def crop_block_size(self, block_size):
@@ -220,15 +237,21 @@ class GPT(nn.Module):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             pos = torch.arange(0, idx_cond.size(1), dtype=torch.long, device=idx.device)
             x = self.transformer.wte(idx_cond) + self.transformer.wpe(pos)
+            use_gru = self.config.halt_head_type == 'gru'
+            gru_state = None
             for _d in range(K):
-                cont = torch.sigmoid(self.halt_head(x[:, -1:, :])).mean().item()  # batch-mean halting
+                if use_gru:
+                    gru_state = self.halt_gru(x[:, -1, :], gru_state)
+                    cont = torch.sigmoid(self.halt_proj(gru_state)).mean().item()
+                else:
+                    cont = torch.sigmoid(self.halt_head(x[:, -1:, :])).mean().item()  # batch-mean halting
                 if cont < halt_thresh:
                     break
                 x = self.transformer.h(x)
-            logits = self.lm_head(self.transformer.norm_f(x[:, -1:, :])) / temperature
+            logits = self.lm_head(self.transformer.norm_f(x[:, -1, :])) / temperature  # [B,V]
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
-            probs = F.softmax(logits.squeeze(1), dim=-1)
+            probs = F.softmax(logits, dim=-1)
             idx = torch.cat((idx, torch.multinomial(probs, num_samples=1)), dim=1)
         return idx

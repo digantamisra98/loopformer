@@ -76,6 +76,13 @@ compile = False # use PyTorch 2.0 to compile the model to be faster
 ### added configs
 model_type = "loopformer"
 max_model_loops = 8
+intermediate_dim = 5120
+# backward-depth-router (backrouter_loop) knobs
+halt_coeff = 0.1
+halt_tau = 0.0
+halt_ponder_coeff = 0.0
+halt_head_type = 'linear'  # 'linear' or 'gru'
+halt_gru_dim = 256
 
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -178,7 +185,11 @@ if os.path.exists(meta_path):
 
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                  bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
+                  bias=bias, vocab_size=None, dropout=dropout, intermediate_dim=intermediate_dim)
+if 'backrouter' in model_type:
+    model_args.update(dict(max_model_loops=max_model_loops, halt_coeff=halt_coeff, halt_tau=halt_tau,
+                           halt_ponder_coeff=halt_ponder_coeff, halt_head_type=halt_head_type,
+                           halt_gru_dim=halt_gru_dim))
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
