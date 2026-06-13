@@ -165,8 +165,14 @@ val_loader = build_loader(
     persistent_workers=True,
     drop_last=True
 )
-train_iter = iter(train_loader)
-val_iter = iter(val_loader)
+def _cycle(loader):
+    # infinite iterator: the finite DataLoader is built for huge corpora; cycling lets small
+    # datasets (e.g. shakespeare prototype) run without StopIteration at eval/train.
+    while True:
+        for batch in loader:
+            yield batch
+train_iter = _cycle(train_loader)
+val_iter = _cycle(val_loader)
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
