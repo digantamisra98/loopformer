@@ -149,7 +149,7 @@ TRAIN_SEED = 1337 + seed_offset
 VAL_SEED = 42 + seed_offset
 seed_everything(TRAIN_SEED)
 
-data_dir = os.path.join('data', dataset)
+data_dir = os.environ.get('LF_DATA') or os.path.join('data', dataset)
 train_loader = build_loader(
     data_dir,
     'train',
