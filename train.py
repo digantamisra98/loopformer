@@ -83,6 +83,13 @@ halt_tau = 0.0
 halt_ponder_coeff = 0.0
 halt_head_type = 'linear'  # 'linear' or 'gru'
 halt_gru_dim = 256
+# looped-MoE + GRU forward router (loopmoe_gru) knobs
+num_experts = 8
+moe_top_k = 2
+moe_inter_dim = 1024
+router_gru_dim = 256
+moe_aux_coeff = 0.01
+router_type = 'gru'
 
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -95,6 +102,8 @@ if model_type == "loopformer":
     from models.loopformer import GPTConfig, GPT
 elif "tmlt" in model_type:
     from models.tmlt import GPTConfig, GPT
+elif "loopmoe" in model_type:
+    from models.loopmoe_gru import GPTConfig, GPT
 elif "backrouter" in model_type:
     from models.backrouter_loop import GPTConfig, GPT
 elif "base_loop" in model_type:
@@ -196,6 +205,11 @@ if 'backrouter' in model_type:
     model_args.update(dict(max_model_loops=max_model_loops, halt_coeff=halt_coeff, halt_tau=halt_tau,
                            halt_ponder_coeff=halt_ponder_coeff, halt_head_type=halt_head_type,
                            halt_gru_dim=halt_gru_dim))
+if 'loopmoe' in model_type:
+    model_args.update(dict(max_model_loops=max_model_loops, num_experts=num_experts,
+                           moe_top_k=moe_top_k, moe_inter_dim=moe_inter_dim,
+                           router_gru_dim=router_gru_dim, moe_aux_coeff=moe_aux_coeff,
+                           router_type=router_type))
 if init_from == 'scratch':
     # init a new model from scratch
     print("Initializing a new model from scratch")
